@@ -1,0 +1,29 @@
+{
+  "pages": [
+    "pages/loading",
+    "pages/index"
+  ],
+  "app": {
+    "title": "PlaySpace",
+    "textColor": {
+      "light": "black",
+      "dark": "white"
+    },
+    "statusBar": "transparent",
+    "actionBarHidden": true,
+    "hideIOSSafeAreaBottom": true,
+    "hideAndroidBottomNavigationBar": false
+  },
+  "network": {
+    "domains": [
+      "b.datlich.net"
+    ]
+  },
+  "webViewDomains": [
+    "b.datlich.net",
+    "https://b.datlich.net"
+  ],
+  "listCSS": [],
+  "listSyncJS": ["assets/index.USHAXc7y.module.js"],
+  "listAsyncJS": []
+}
