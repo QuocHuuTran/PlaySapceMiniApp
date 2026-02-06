@@ -1,3 +1,7 @@
+import { BASE_URL, imgUrl } from "@/constants/config";
+import { CourtInfo } from "@/models/court";
+import { fetchCourtInfo } from "@/services/ground_service";
+import { checkIsOpen } from "@/utils/date-utils";
 import React, { useEffect, useRef, useState } from "react";
 import {
   openWebview,
@@ -8,40 +12,78 @@ import {
   getSetting,
   authorize,
   events,
+  showOAWidget,
 } from "zmp-sdk/apis";
-import { Button, Page, Spinner, Text } from "zmp-ui";
-import background from "@/static/bg.svg";
+import { Button, Icon, Page, Spinner, Text } from "zmp-ui";
+
 export default function HomePage() {
   const isCalled = useRef(false);
   const [loading, setLoading] = useState(true);
-  const generateTargetUrl = async () => {
-    const params = await getRouteParams();
-    const code = params?.code || "";
-    const booking = params?.bk;
-    let finalPaths = "";
-    let tokenZalo = "";
-    let tokenPhone = ""; 
-    
-    if (booking === "true") {
-      tokenZalo = await getAccessToken();
-      const phoneRes = await getPhoneNumber();
-      tokenPhone = phoneRes.token ?? "";
-      finalPaths = `s/${code}`;
-    } else {
-      finalPaths = `space/0001096`;
-    }
-
-    return `https://b.datlich.net/${finalPaths}?tokenName=${tokenZalo}&tokenPhone=${tokenPhone}`;
+  const [courtData, setCourtData] = useState<CourtInfo | null>(null);
+  const [oaIdFromParams, setOaIdFromParams] = useState("4580885597509011549");
+  const renderOA = (id: string | null = null) => {
+    const targetOaId = id || oaIdFromParams;
+    setTimeout(() => {
+      showOAWidget({
+        id: "oaWidget",
+        oaId: targetOaId,
+        guidingText: "Nhận thông báo trải nghiệm tốt hơn",
+        color: "#0068FF",
+        onStatusChange: (status) => console.log("OA Status:", status),
+      });
+    }, 100);
   };
+  const getAuthData = async () => {
+    const { authSetting } = await getSetting();
+    const hasUserInfo = authSetting["scope.userInfo"];
+    const hasPhone = authSetting["scope.userPhonenumber"];
+    if (!hasUserInfo && !hasPhone) {
+      await authorize({
+        scopes: ["scope.userInfo", "scope.userPhonenumber"],
+      });
+    }
+    const tokenZalo = await getAccessToken();
+    const phoneRes = await getPhoneNumber();
+    return { tokenZalo, tokenPhone: phoneRes.token ?? "" };
+  };
+  const openBooking = async (isAuto = false) => {
+    setLoading(true);
+    try {
+      const params = await getRouteParams();
+      const code = params?.code || "";
+      const booking = params?.bk === "true";
+      let finalPaths = "";
+      let authData = { tokenZalo: "", tokenPhone: "" };
+      if (booking || code !== null || code !== "") {
+        authData = await getAuthData();
+        finalPaths = `s/${code}`;
+      } else {
+        authData = await getAuthData();
+        finalPaths = `space/0001125`;
+      }
+      const targetUrl = `${BASE_URL}/${finalPaths}?zalo="MiniApp"&tokenName=${authData.tokenZalo}&tokenPhone=${authData.tokenPhone}`;
+      openWebview({
+        url: targetUrl,
+        config: { style: "normal" },
+        fail: (err) => {
+          console.error("Mở webview thất bại:", err);
+          setLoading(false);
+          if (isAuto) closeApp();
+        },
+      });
+    } catch (e) {
+      console.error("Lỗi:", e);
+      setLoading(false);
+    }
+  };
+  const isOpen = checkIsOpen(courtData?.OpenTime, courtData?.CloseTime);
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // Khi người dùng bấm Back từ Webview, Mini App sẽ Visible trở lại
       if (document.visibilityState === "visible" && isCalled.current) {
-        // TẮT LOADING để hiển thị giao diện Logo/Button của Mini App
         setLoading(false);
+        renderOA();
       }
     };
-
     document.addEventListener("visibilitychange", handleVisibilityChange);
     const handleAppShow = () => {
       if (isCalled.current) {
@@ -49,34 +91,29 @@ export default function HomePage() {
       }
     };
     events.on("appShow", handleAppShow);
-    const initApp = async () => {
-      try {
-        const { authSetting } = await getSetting();
-        const hasUserInfo = authSetting["scope.userInfo"];
-        const hasPhone = authSetting["scope.userPhonenumber"];
-        if (!hasUserInfo && !hasPhone) {
-          await authorize({
-            scopes: ["scope.userInfo", "scope.userPhonenumber"],
-          });
+
+    const checkAutoInit = async () => {
+      const params = await getRouteParams();
+      const comId = params?.comId ? params?.comId : "0001125";
+      const customOaId = params?.oaId;
+      if (comId) {
+        const data = await fetchCourtInfo(comId);
+        if(data.Message === "Success"){
+          setCourtData(data);
         }
-        const targetUrl = await generateTargetUrl();
-        openWebview({
-          url: targetUrl,
-          config: { style: "normal" },
-          fail: (err) => {
-            console.error("Mở webview thất bại:", err);
-            closeApp();
-            setLoading(false);
-          },
-        });
-      } catch (error) {
-        console.error("Lỗi khởi tạo:", error);
-        closeApp();
+      }
+      if (customOaId) {
+        setOaIdFromParams(customOaId);
+      }
+      if (params?.bk === "true") {
+        openBooking(true);
+      } else {
+        setLoading(false);
+        renderOA(customOaId);
       }
     };
-
     if (!isCalled.current) {
-      initApp();
+      checkAutoInit();
       isCalled.current = true;
     }
 
@@ -85,29 +122,13 @@ export default function HomePage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
-
-  const openBooking = async () => {
-    setLoading(true);
-    try {
-      const url = await generateTargetUrl();
-      openWebview({
-        url,
-        config: { style: "normal" },
-        fail: () => setLoading(false)
-      });
-    } catch (e) {
-      setLoading(false);
-    }
-  };
-  const logoUrl = "https://app.playspace.vn/playspace_assets/img/PlaySpace.png";
-  if (loading) {
+  if (loading || !courtData) {
     return (
       <Page
         className="flex items-center justify-center h-screen"
         style={{
-          backgroundImage: `url(${background})`,
-          backgroundSize: "cover", // Phủ kín màn hình
-          backgroundPosition: "center", // Căn giữa ảnh
+          backgroundSize: "cover",
+          backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
         }}
       >
@@ -116,26 +137,63 @@ export default function HomePage() {
     );
   }
   return (
-    <Page
-      className="flex flex-col items-center justify-center h-screen space-y-4 text-center"
-      style={{
-        backgroundImage: `url(${background})`,
-        backgroundSize: "cover", // Phủ kín màn hình
-        backgroundPosition: "center", // Căn giữa ảnh
-        backgroundRepeat: "no-repeat",
-      }}
-    >
-      <div className="px-16 py-4">
-        <img src={logoUrl} alt="Logo" />
+    <Page className="bg-gray-100 min-h-screen relative">
+      <div
+        className="h-60 w-full"
+        style={{
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      >
+        <div className="flex items-center text-white" >
+          <img src={imgUrl} alt="Logo" />
+        </div>
       </div>
-      <div className="flex flex-col space-y-2 w-full px-8">
-        <Button className="bg-green-600" onClick={openBooking} fullWidth>
-          Mở ứng dụng
-        </Button>
-
-        <Button variant="secondary" onClick={() => closeApp()} fullWidth>
-          Thoát
-        </Button>
+      <div className="px-4 -mt-12 space-y-4 relative z-10">
+        <div className="bg-white rounded-xl p-5 shadow-sm">
+          <h1 className="text-xl font-bold uppercase mb-4">
+            {courtData.ComName}
+          </h1>
+          <div className="space-y-3 text-gray-600 text-sm">
+            <div className="flex items-center">
+              <Icon icon="zi-location" className="mr-2 text-blue-500" />
+              <span>{courtData.Address}</span>
+            </div>
+            <div className="flex items-center">
+              <Icon icon="zi-call" className="mr-2 text-blue-500" />
+              <span>Hotline: {courtData?.Phone}</span>
+            </div>
+            <div className="flex items-center">
+              <Icon icon="zi-clock-1" className="mr-2 text-blue-500" />
+              <span>
+                Mở cửa: {courtData.OpenTime} - {courtData.CloseTime}
+              </span>
+            </div>
+            <div
+              className={`inline-block text-white px-3 py-1 rounded text-xs font-bold ${
+                isOpen ? "bg-green-500" : "bg-red-500"
+              }`}
+            >
+              ● {isOpen ? "Đang mở cửa" : "Đã đóng cửa"}
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl p-6 shadow-sm text-center">
+          <p className="text-sm text-gray-700 mb-4">
+            Đăng nhập bằng số điện thoại để đặt lịch hẹn
+          </p>
+          <Button
+            className="bg-green-600"
+            onClick={() => openBooking(false)}
+            fullWidth
+          >
+            Tiếp tục với Zalo
+          </Button>
+          <div id="oaWidget" className="my-2" />
+          <p className="text-[10px] text-gray-400 mt-4 px-4 leading-tight">
+            Bằng việc tiếp tục, bạn đồng ý với Điều khoản sử dụng của chúng tôi.
+          </p>
+        </div>
       </div>
     </Page>
   );
